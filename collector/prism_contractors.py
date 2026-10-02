@@ -84,7 +84,10 @@ def get(url, timeout=120, tries=3, binary=False):
 
 
 def search_parcel(pin, limit=100):
-    q = urllib.parse.urlencode({'pin': pin, 'limit': limit, 'offset': 0})
+    # Parcel numbers carry runs of spaces ("148-5A207  91"). urlencode would send those as '+',
+    # which this service does not read back as a space, and every search then returns nothing.
+    q = urllib.parse.urlencode({'pin': pin, 'limit': limit, 'offset': 0},
+                               quote_via=urllib.parse.quote)
     body = get(f'{SEARCH}?{q}', timeout=120)
     if not body:
         return []
@@ -169,6 +172,8 @@ def worker(q, out, pause, tmpdir, max_pdfs):
                 found += 1
         with lock:
             stats['parcels'] += 1
+            if not hits:
+                stats['empty'] = stats.get('empty', 0) + 1
             stats['pdfs'] += pdfs
             stats['text'] += text_seen
             stats['contractors'] += found
@@ -182,7 +187,7 @@ def worker(q, out, pause, tmpdir, max_pdfs):
             if stats['parcels'] % 50 == 0:
                 out.flush()
                 rate = stats['parcels'] / max(1, time.time() - stats['started'])
-                print(f"  {stats['parcels']:,} parcels, {stats['pdfs']:,} pdfs, "
+                print(f"  {stats['parcels']:,} parcels ({stats.get('empty', 0):,} empty), {stats['pdfs']:,} pdfs, "
                       f"{stats['text']:,} with text, {stats['contractors']:,} contractors, "
                       f"{rate:.2f} parcels/s", flush=True)
         q.task_done()
