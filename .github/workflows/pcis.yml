@@ -2,12 +2,15 @@ name: pcis
 on:
   workflow_dispatch:
     inputs:
+      start:
+        description: 'where block 0 begins in the newest-first list (122956 skips 2026)'
+        default: '122956'
       block:
-        description: 'which block of the newest-first permit list (0, 1, 2, ...)'
+        description: 'which block after start (0, 1, 2, ...)'
         default: '0'
       block_size:
         description: 'permits per block, split across the 20 shards'
-        default: '4000'
+        default: '120000'
       workers:
         description: 'threads per shard'
         default: '3'
@@ -30,7 +33,7 @@ jobs:
       - name: Collect
         run: |
           python collector/pcis_contractors.py --permits permits.csv.gz \
-            --block "${{ inputs.block }}" --block-size "${{ inputs.block_size }}" \
+            --start "${{ inputs.start }}" --block "${{ inputs.block }}" --block-size "${{ inputs.block_size }}" \
             --shard "${{ matrix.shard }}/20" --workers "${{ inputs.workers }}" \
             --pause "${{ inputs.pause }}" --out out.jsonl.gz
       - name: Send to the private repository
@@ -40,7 +43,7 @@ jobs:
           TARGET: ${{ secrets.RESULTS_REPO }}
         run: |
           [ -f out.jsonl.gz ] || exit 0
-          path="la_city_pcis/block-${{ inputs.block }}/shard-${{ matrix.shard }}.jsonl.gz"
+          path="la_city_pcis/s${{ inputs.start }}-b${{ inputs.block }}/shard-${{ matrix.shard }}.jsonl.gz"
           python3 - "$path" <<'PY'
           import base64, json, os, sys, time, urllib.request, urllib.error
           path = sys.argv[1]; tok = os.environ['TOKEN']; repo = os.environ['TARGET']

@@ -134,13 +134,18 @@ def main():
     ap.add_argument('--workers', type=int, default=3)
     ap.add_argument('--pause', type=float, default=0.3)
     ap.add_argument('--out', type=Path, required=True)
+    ap.add_argument('--start', type=int, default=0,
+                    help='index in the newest-first list where block 0 begins, so a run can skip years already held')
+    ap.add_argument('--max-seconds', type=int, default=19800,
+                    help='stop taking new permits after this long, so the output closes cleanly before a job limit')
     args = ap.parse_args()
 
     i, n = (int(x) for x in args.shard.split('/'))
     with gzip.open(args.permits, 'rt', encoding='utf-8') as f:
         f.readline()
         allp = [line.split(',')[0].strip() for line in f]
-    block = allp[args.block * args.block_size:(args.block + 1) * args.block_size]
+    lo = args.start + args.block * args.block_size
+    block = allp[lo:lo + args.block_size]
     mine = block[i::n]
     print(f'{len(allp):,} permits in all; block {args.block} holds {len(block):,}; '
           f'shard {i}/{n} takes {len(mine):,}', flush=True)
@@ -152,6 +157,9 @@ def main():
         for t in ts:
             t.start()
         for p in mine:
+            if time.time() - started > args.max_seconds:
+                print('time budget reached; closing cleanly', flush=True)
+                break
             q.put(p)
         for _ in ts:
             q.put(None)
