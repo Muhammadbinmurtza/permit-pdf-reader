@@ -1,0 +1,7 @@
+# results never belong in this repository
+*.jsonl
+*.csv
+!pins.csv
+pdfs/
+__pycache__/
+*.pyc

@@ -1,0 +1,88 @@
+name: collect
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: 'how many shards to split the parcels across'
+        default: '20'
+      workers:
+        description: 'threads per shard'
+        default: '10'
+      limit:
+        description: 'parcels per shard, 0 for all (use a small number for a first run)'
+        default: '200'
+
+# Results are pushed to a separate private repository, never committed here. A public repository
+# is world-readable and its workflow artifacts are downloadable by anyone, so nothing collected
+# should land in it.
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the PDF text extractor
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
+      - name: Collect this shard
+        run: |
+          python collector/prism_contractors.py \
+            --pins pins.csv \
+            --out "shard-${{ matrix.shard }}.jsonl" \
+            --shard "${{ matrix.shard }}/${{ github.event.inputs.shards }}" \
+            --workers "${{ github.event.inputs.workers }}" \
+            --limit "${{ github.event.inputs.limit }}" \
+            --pause 0.2
+
+      - name: Report what this shard found
+        if: always()
+        run: |
+          f="shard-${{ matrix.shard }}.jsonl"
+          echo "rows: $(wc -l < "$f" 2>/dev/null || echo 0)"
+          python - <<'PY'
+          import json, glob, collections
+          years, named, parcels, text = collections.Counter(), 0, 0, 0
+          for fn in glob.glob('shard-*.jsonl'):
+              for line in open(fn, encoding='utf-8', errors='replace'):
+                  try:
+                      d = json.loads(line)
+                  except Exception:
+                      continue
+                  if d.get('_done'):
+                      parcels += 1
+                      text += d.get('with_text', 0)
+                      continue
+                  named += 1
+                  years[(d.get('doc_date') or '')[:4]] += 1
+          print(f'parcels done: {parcels:,}   pdfs with text: {text:,}   contractors named: {named:,}')
+          print('by year:', dict(sorted(years.items(), reverse=True)[:15]))
+          PY
+
+      - name: Send the result to the private repository
+        if: always()
+        env:
+          TOKEN: ${{ secrets.RESULTS_TOKEN }}
+          TARGET: ${{ secrets.RESULTS_REPO }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$TARGET" ]; then
+            echo "RESULTS_TOKEN or RESULTS_REPO is not set, so the result stays on the runner."
+            echo "Set both as repository secrets: a token with write access, and owner/repo."
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:$TOKEN@github.com/$TARGET" out
+          mkdir -p out/la_city_prism
+          cp "shard-${{ matrix.shard }}.jsonl" out/la_city_prism/ 2>/dev/null || true
+          cd out
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -f la_city_prism/
+          git commit -m "prism shard ${{ matrix.shard }}" || echo "nothing to commit"
+          for try in 1 2 3 4 5; do
+            git push && break
+            git pull --rebase || git rebase --abort || true
+            sleep $((try * 5))
+          done
