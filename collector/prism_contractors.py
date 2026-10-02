@@ -42,7 +42,8 @@ RE_PERMIT = re.compile(r'Permit\s*#:\s*(?P<nbr>[0-9]{2,6}\s*-\s*[0-9]{3,6}\s*-\s
 RE_SIGNER = re.compile(r'Print\s+Name:\s*(?P<who>[^\r\n]{2,80})', re.I)
 
 lock = threading.Lock()
-stats = {'parcels': 0, 'pdfs': 0, 'text': 0, 'contractors': 0, 'failed': 0, 'started': time.time()}
+stats = {'parcels': 0, 'pdfs': 0, 'text': 0, 'contractors': 0, 'failed': 0,
+         'http': {}, 'started': time.time()}
 
 
 OPENER = None
@@ -71,8 +72,18 @@ def get(url, timeout=120, tries=3, binary=False):
             with opener.open(req, timeout=timeout) as r:
                 return r.read() if binary else r.read().decode('utf-8', 'replace')
         except urllib.error.HTTPError as e:
-            if e.code in (403, 404):
+            # Record what the service actually said. Treating 403 as "nothing here" hid a wall of
+            # throttling behind 3,392 parcels that looked simply empty.
+            with lock:
+                stats.setdefault('http', {})
+                stats['http'][e.code] = stats['http'].get(e.code, 0) + 1
+            if e.code == 404:
                 return None
+            if e.code in (403, 429):
+                time.sleep(5 * (attempt + 1))     # throttled: wait rather than give up
+                if attempt == tries - 1:
+                    return None
+                continue
             if attempt == tries - 1:
                 return None
             time.sleep(3 * (attempt + 1))
