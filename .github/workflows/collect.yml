@@ -11,6 +11,9 @@ on:
       limit:
         description: 'parcels per shard, 0 for all (use a small number for a first run)'
         default: '200'
+      spread:
+        description: 'true to sample across all years rather than the newest parcels'
+        default: 'true'
 
 # Results are pushed to a separate private repository, never committed here. A public repository
 # is world-readable and its workflow artifacts are downloadable by anyone, so nothing collected

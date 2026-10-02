@@ -225,6 +225,8 @@ def main():
     ap.add_argument('--max-pdfs', type=int, default=12, help='pdfs per parcel')
     ap.add_argument('--shard', default='0/1', help='i/n, so several runs can split the work')
     ap.add_argument('--limit', type=int, default=0)
+    ap.add_argument('--spread', action='store_true',
+                    help='sample evenly across all years instead of taking the newest parcels')
     ap.add_argument('--proxy', default='', help='http://host:port — or set HTTPS_PROXY instead, '
                                                 'which keeps any password out of the command line')
     args = ap.parse_args()
@@ -245,7 +247,14 @@ def main():
 
     pins = load_pins(args.pins, i, n, done)
     if args.limit:
-        pins = pins[:args.limit]
+        if args.spread:
+            # Take the sample evenly across the whole list rather than off the top. The list is
+            # newest parcel first, so the top is all one year; a spread run reports which years
+            # PRISM actually holds documents for.
+            step = max(1, len(pins) // args.limit)
+            pins = pins[::step][:args.limit]
+        else:
+            pins = pins[:args.limit]
     print(f'shard {i}/{n}: {len(pins):,} parcels to do, {args.workers} workers', flush=True)
 
     tmpdir = os.environ.get('RUNNER_TEMP') or os.environ.get('TMP') or '.'
