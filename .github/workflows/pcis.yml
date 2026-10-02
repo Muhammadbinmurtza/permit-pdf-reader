@@ -1,0 +1,66 @@
+name: pcis
+on:
+  workflow_dispatch:
+    inputs:
+      block:
+        description: 'which block of the newest-first permit list (0, 1, 2, ...)'
+        default: '0'
+      block_size:
+        description: 'permits per block, split across the 20 shards'
+        default: '4000'
+      workers:
+        description: 'threads per shard'
+        default: '3'
+      pause:
+        description: 'seconds each thread waits between requests'
+        default: '0.3'
+
+# Results go to the private results repository through the contents API; nothing collected is
+# committed to this public one.
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect
+        run: |
+          python collector/pcis_contractors.py --permits permits.csv.gz \
+            --block "${{ inputs.block }}" --block-size "${{ inputs.block_size }}" \
+            --shard "${{ matrix.shard }}/20" --workers "${{ inputs.workers }}" \
+            --pause "${{ inputs.pause }}" --out out.jsonl.gz
+      - name: Send to the private repository
+        if: always()
+        env:
+          TOKEN: ${{ secrets.RESULTS_TOKEN }}
+          TARGET: ${{ secrets.RESULTS_REPO }}
+        run: |
+          [ -f out.jsonl.gz ] || exit 0
+          path="la_city_pcis/block-${{ inputs.block }}/shard-${{ matrix.shard }}.jsonl.gz"
+          python3 - "$path" <<'PY'
+          import base64, json, os, sys, time, urllib.request, urllib.error
+          path = sys.argv[1]; tok = os.environ['TOKEN']; repo = os.environ['TARGET']
+          api = f'https://api.github.com/repos/{repo}/contents/{path}'
+          hdr = {'Authorization': f'token {tok}', 'Accept': 'application/vnd.github+json'}
+          content = base64.b64encode(open('out.jsonl.gz', 'rb').read()).decode()
+          for attempt in range(6):
+              sha = None
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(api + '?ref=la-probe', headers=hdr)) as r:
+                      sha = json.load(r)['sha']
+              except urllib.error.HTTPError:
+                  pass
+              body = {'message': f'pcis {path}', 'content': content, 'branch': 'la-probe'}
+              if sha:
+                  body['sha'] = sha
+              try:
+                  req = urllib.request.Request(api, data=json.dumps(body).encode(), headers=hdr, method='PUT')
+                  with urllib.request.urlopen(req) as r:
+                      print('stored', path, r.status); break
+              except urllib.error.HTTPError as e:
+                  print('retry', e.code); time.sleep(5 * (attempt + 1))
+          PY
