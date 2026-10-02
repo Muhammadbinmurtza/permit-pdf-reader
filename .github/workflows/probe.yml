@@ -1,0 +1,39 @@
+name: probe
+on:
+  workflow_dispatch:
+
+# Fetch a handful of permit detail pages and keep them, so a parser can be written against the
+# real markup. The pages go to the private results repository through the contents API, which
+# needs no clone; nothing is committed here.
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch sample permit detail pages
+        env:
+          TOKEN: ${{ secrets.RESULTS_TOKEN }}
+          TARGET: ${{ secrets.RESULTS_REPO }}
+        run: |
+          set +e
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36'
+          mkdir -p pages
+          : > pages/index.txt
+          for p in 26016-90000-23958 26041-10000-31386 26019-10000-01458 26042-90000-04533 26043-20000-00244 18016-10000-14977 12016-20000-01234 05016-10000-12345; do
+            IFS=- read a b c <<< "$p"
+            for host in www.ladbsservices2.lacity.org ladbsservices2.lacity.org; do
+              u="https://$host/OnlineServices/PermitReport/PcisPermitDetail?id1=$a&id2=$b&id3=$c"
+              code=$(curl -s -o "pages/$p.html" -w '%{http_code}' --max-time 60 -A "$UA" "$u")
+              sz=$(wc -c < "pages/$p.html")
+              echo "$p  $host  HTTP $code  $sz bytes  contractor-hits=$(grep -ci contractor pages/$p.html)" | tee -a pages/index.txt
+              [ "$code" = "200" ] && [ "$sz" -gt 3000 ] && break
+            done
+          done
+          if [ -z "$TOKEN" ]; then echo "no token"; exit 0; fi
+          for f in pages/*; do
+            name=$(basename "$f")
+            content=$(base64 -w0 "$f")
+            sha=$(curl -s -H "Authorization: token $TOKEN" "https://api.github.com/repos/$TARGET/contents/la_city_pcis/sample/$name?ref=la-probe" | python3 -c "import json,sys;print(json.load(sys.stdin).get('sha',''))" 2>/dev/null)
+            body=$(python3 -c "import json,sys;print(json.dumps({'message':'pcis sample $name','content':sys.argv[1],'branch':'la-probe','sha':sys.argv[2]} if sys.argv[2] else {'message':'pcis sample $name','content':sys.argv[1],'branch':'la-probe'}))" "$content" "$sha")
+            curl -s -o /dev/null -w "$name -> %{http_code}\n" -X PUT -H "Authorization: token $TOKEN" \
+                 "https://api.github.com/repos/$TARGET/contents/la_city_pcis/sample/$name" -d "$body"
+          done
