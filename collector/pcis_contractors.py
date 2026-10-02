@@ -156,6 +156,10 @@ def main():
         for _ in ts:
             q.put(None)
         q.join()
+        # a closing record, so a run's speed can be read back from its output alone
+        out.write(json.dumps({'_meta': True, 'seconds': round(time.time() - started),
+                              'permits': len(mine), 'workers': args.workers, 'pause': args.pause,
+                              'stats': dict(stats)}) + '\n')
     print(f'\ndone: {dict(stats)}  in {time.time() - started:.0f}s', flush=True)
 
 
