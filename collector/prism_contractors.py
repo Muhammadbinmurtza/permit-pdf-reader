@@ -153,6 +153,14 @@ def worker(q, out, pause, tmpdir, max_pdfs):
         time.sleep(pause)
         hits = search_parcel(pin)
         rows, pdfs, text_seen, found = [], 0, 0, 0
+        # what the search returned, so a run that finds nothing says which step failed:
+        # no documents at all, documents without a pdf, or documents whose type we skip
+        seen_types, with_pdf = {}, 0
+        for h in hits:
+            t = (h.get('doc_type') or '?').upper()
+            seen_types[t] = seen_types.get(t, 0) + 1
+            if h.get('pdf_url'):
+                with_pdf += 1
         for h in hits:
             if pdfs >= max_pdfs:
                 break
@@ -181,7 +189,8 @@ def worker(q, out, pause, tmpdir, max_pdfs):
                 stats['failed'] += 1
             for r in rows:
                 out.write(json.dumps(r, separators=(',', ':')) + '\n')
-            out.write(json.dumps({'pin': pin, '_done': True, 'pdfs': pdfs,
+            out.write(json.dumps({'pin': pin, '_done': True, 'hits': len(hits),
+                                  'with_pdf': with_pdf, 'types': seen_types, 'pdfs': pdfs,
                                   'with_text': text_seen, 'contractors': found},
                                  separators=(',', ':')) + '\n')
             if stats['parcels'] % 50 == 0:
